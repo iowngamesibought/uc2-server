@@ -1,0 +1,8 @@
+# Your own game files and local settings: never commit them.
+game/
+static/
+# Every local config; only the example is published.
+uc2-server*.toml
+!uc2-server.example.toml
+# Build output.
+target/

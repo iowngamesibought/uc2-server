@@ -1,0 +1,40 @@
+# uc2-server config. Copy to uc2-server.toml; paths are relative to this file. See README.md.
+
+# This machine's LAN address as the console sees it, e.g. 192.168.1.50.
+public_host = "CHANGE-ME"
+
+# Your own game files (AGENTS.md explains how to find them).
+executable     = "game/<main executable>"
+script_archive = "game/<script archive>"
+text_archive   = "game/<text archive>"
+
+# Optional: serve a ready .crypt file as the online text for a language index, instead of the text
+# from text_archive.
+# text_overrides = { "2" = "game/<file>.crypt" }
+
+# Optional: a folder of extra static files to serve as is, e.g. languages/english/motd.jpg for the
+# message-of-the-day image. Generated files take precedence.
+# data_dir = "static"
+
+[http]
+bind = "0.0.0.0:80"
+
+[auth]
+bind = "0.0.0.0:3233"
+
+[presence]
+bind = "0.0.0.0:3232"
+# Seconds until the console's next heartbeat (values below 30 are treated as 30).
+heartbeat_interval_secs = 30
+# A player's session is dropped after this many seconds without a message.
+session_timeout_secs = 120
+# Coordinates sent to every console for geographic matchmaking; one shared value keeps all players
+# in one region.
+default_location = { lat = 0.0, lon = 0.0 }
+# The daily player count resets at midnight in this UTC offset (e.g. 8 for UTC+8).
+daily_reset_utc_offset_hours = 0
+
+[netbin]
+# Optional: a JSON file with both server configs, replacing the ones derived from public_host and
+# the ports above (advanced).
+# json = "netbin.json"

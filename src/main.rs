@@ -59,19 +59,31 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
         .init();
     match Cli::parse().cmd {
         Cmd::Run { config } => run(&config).await,
         Cmd::GenNetbin { config, out } => {
             let cfg = config::Config::load(&config)?;
             let cipher = cipher::BlobCipher::from_executable(&cfg.executable)?;
-            let a = netbin::build_all(&cfg.netbin_config()?, cfg.base_net_module()?.as_deref(), &cipher)?;
+            let a = netbin::build_all(
+                &cfg.netbin_config()?,
+                cfg.base_net_module()?.as_deref(),
+                &cipher,
+            )?;
             std::fs::create_dir_all(&out)?;
             std::fs::write(out.join("net.bin"), &a.module)?;
             std::fs::write(out.join("net.bin.archive"), &a.archive)?;
             std::fs::write(out.join("net.bin.archive.crypt"), &a.crypt)?;
-            println!("net.bin {} bytes, archive {}, crypt {} -> {}", a.module.len(), a.archive.len(), a.crypt.len(), out.display());
+            println!(
+                "net.bin {} bytes, archive {}, crypt {} -> {}",
+                a.module.len(),
+                a.archive.len(),
+                a.crypt.len(),
+                out.display()
+            );
             Ok(())
         }
         Cmd::ListArchive { file, all } => list_archive(&file, all),
@@ -82,7 +94,10 @@ async fn main() -> Result<()> {
 fn archive_role(names: &[String]) -> &'static str {
     if names.iter().any(|n| n == "net.bin") {
         "fits script_archive (lists net.bin among its script modules)"
-    } else if names.iter().any(|n| n.split_once('.').is_some_and(|(i, c)| c == "networking" && i.parse::<u32>().is_ok())) {
+    } else if names.iter().any(|n| {
+        n.split_once('.')
+            .is_some_and(|(i, c)| c == "networking" && i.parse::<u32>().is_ok())
+    }) {
         "fits text_archive (per-language <n>.<category> tables, including <n>.networking)"
     } else {
         "fits neither script_archive nor text_archive"
@@ -91,9 +106,14 @@ fn archive_role(names: &[String]) -> &'static str {
 
 fn list_archive(file: &Path, all: bool) -> Result<()> {
     let blob = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-    let names = netbin::archive_manifest(&blob).with_context(|| format!("{} is not a readable game archive", file.display()))?;
+    let names = netbin::archive_manifest(&blob)
+        .with_context(|| format!("{} is not a readable game archive", file.display()))?;
     println!("{}: {} entries", file.display(), names.len());
-    let shown = if all { names.len() } else { names.len().min(20) };
+    let shown = if all {
+        names.len()
+    } else {
+        names.len().min(20)
+    };
     for n in &names[..shown] {
         println!("  {n}");
     }
@@ -107,15 +127,25 @@ fn list_archive(file: &Path, all: bool) -> Result<()> {
 /// `build/main/text1/<n>.networking.crypt`, which the client downloads for its language index n; a
 /// missing file aborts the online start ("error syncing text"). Each comes from the user's text
 /// archive unless text_overrides names a ready .crypt for that index.
-fn networking_texts(cfg: &config::Config, cipher: &cipher::BlobCipher, assets: &mut http::Assets) -> Result<()> {
+fn networking_texts(
+    cfg: &config::Config,
+    cipher: &cipher::BlobCipher,
+    assets: &mut http::Assets,
+) -> Result<()> {
     let key = |index: &str| format!("build/main/text1/{index}.networking.crypt");
     let mut written = Vec::new();
     if let Some(path) = &cfg.text_archive {
         let blob = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        let names = netbin::archive_manifest(&blob)
-            .with_context(|| format!("text_archive = {}: not a readable archive (see AGENTS.md)", path.display()))?;
+        let names = netbin::archive_manifest(&blob).with_context(|| {
+            format!(
+                "text_archive = {}: not a readable archive (see AGENTS.md)",
+                path.display()
+            )
+        })?;
         for name in names {
-            let Some(index) = name.strip_suffix(".networking") else { continue };
+            let Some(index) = name.strip_suffix(".networking") else {
+                continue;
+            };
             if cfg.text_overrides.contains_key(index) {
                 continue;
             }
@@ -124,18 +154,23 @@ fn networking_texts(cfg: &config::Config, cipher: &cipher::BlobCipher, assets: &
             written.push(index.to_string());
         }
         if written.is_empty() && cfg.text_overrides.is_empty() {
-            anyhow::bail!("text_archive = {}: not the text archive (it has no <n>.networking entries; see AGENTS.md)",
-                          path.display());
+            anyhow::bail!(
+                "text_archive = {}: not the text archive (it has no <n>.networking entries; see AGENTS.md)",
+                path.display()
+            );
         }
     }
     for (index, source) in &cfg.text_overrides {
-        let bytes = std::fs::read(source).with_context(|| format!("reading text override {}", source.display()))?;
+        let bytes = std::fs::read(source)
+            .with_context(|| format!("reading text override {}", source.display()))?;
         assets.insert(key(index), http::Asset::new(bytes));
         info!(index = %index, source = %source.display(), "networking text override");
     }
     if written.is_empty() && cfg.text_overrides.is_empty() {
-        warn!("neither text_archive nor text_overrides is set: build/main/text1/<n>.networking.crypt will 404 \
-               and the client stops with a text sync error");
+        warn!(
+            "neither text_archive nor text_overrides is set: build/main/text1/<n>.networking.crypt will 404 \
+               and the client stops with a text sync error"
+        );
     } else {
         info!(from_game = %written.join(","), overrides = cfg.text_overrides.len(), "networking texts ready");
     }
@@ -150,9 +185,14 @@ async fn run(config_path: &Path) -> Result<()> {
     let netbin_cfg = cfg.netbin_config()?;
     let base_module = cfg.base_net_module()?;
     match &base_module {
-        Some(m) => info!(bytes = m.len(), "using the installed net.bin as the base of the served config"),
-        None => warn!("script_archive is not set: the served net.bin holds only the server configs and drops \
-                       the other online settings; the client then stalls during its online start"),
+        Some(m) => info!(
+            bytes = m.len(),
+            "using the installed net.bin as the base of the served config"
+        ),
+        None => warn!(
+            "script_archive is not set: the served net.bin holds only the server configs and drops \
+                       the other online settings; the client then stalls during its online start"
+        ),
     }
     let artifacts = netbin::build_all(&netbin_cfg, base_module.as_deref(), &cipher)?;
     let mut assets = http::Assets::new();
@@ -167,14 +207,26 @@ async fn run(config_path: &Path) -> Result<()> {
         info!(path = %format!("/{name}.psarc.crypt"), bytes = asset.len(), "live-data config ready (in memory)");
         assets.insert(format!("{name}.psarc.crypt"), asset);
     }
-    info!(auth = format_args!("{}:{}", netbin_cfg.config_a.auth_host, netbin_cfg.config_a.auth_port),
-        presence_port = netbin_cfg.config_a.port_a, "net.bin points the client here");
+    info!(
+        auth = format_args!(
+            "{}:{}",
+            netbin_cfg.config_a.auth_host, netbin_cfg.config_a.auth_port
+        ),
+        presence_port = netbin_cfg.config_a.port_a,
+        "net.bin points the client here"
+    );
     networking_texts(&cfg, &cipher, &mut assets)?;
 
-    let registry = Arc::new(state::Registry::new(cfg.presence.daily_reset_utc_offset_hours));
+    let registry = Arc::new(state::Registry::new(
+        cfg.presence.daily_reset_utc_offset_hours,
+    ));
     let http = tokio::spawn(http::serve(cfg.http.bind, assets, cfg.data_dir.clone()));
     let auth = tokio::spawn(auth::serve(cfg.auth.bind, cipher.clone(), registry.clone()));
-    let presence = tokio::spawn(presence::serve(cfg.presence, cipher.clone(), registry.clone()));
+    let presence = tokio::spawn(presence::serve(
+        cfg.presence,
+        cipher.clone(),
+        registry.clone(),
+    ));
 
     tokio::select! {
         r = http => r??,
@@ -192,8 +244,14 @@ mod tests {
     #[test]
     fn archive_roles_follow_entry_names() {
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(archive_role(&names(&["alpha.bin", "net.bin", "beta.bin"])).starts_with("fits script_archive"));
-        assert!(archive_role(&names(&["2.common", "2.networking", "3.subtitles"])).starts_with("fits text_archive"));
+        assert!(
+            archive_role(&names(&["alpha.bin", "net.bin", "beta.bin"]))
+                .starts_with("fits script_archive")
+        );
+        assert!(
+            archive_role(&names(&["2.common", "2.networking", "3.subtitles"]))
+                .starts_with("fits text_archive")
+        );
         assert!(archive_role(&names(&["2.common", "x.networking"])).starts_with("fits neither"));
         assert!(archive_role(&names(&["map.pak"])).starts_with("fits neither"));
     }

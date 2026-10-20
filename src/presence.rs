@@ -18,29 +18,54 @@ use tracing::{debug, info, warn};
 
 use crate::cipher::BlobCipher;
 use crate::config::PresenceConfig;
-use crate::state::Registry;
+use crate::state::{REJECTED_LOGS_PER_MINUTE, Registry, Throttle};
 
 /// The client receives replies into a 0xff-byte buffer.
 const CLIENT_RECV_MAX: usize = 0xff;
 
 #[derive(Debug, PartialEq)]
 pub enum Request<'a> {
-    Heartbeat { id: &'a str, state: &'a str, headset: bool, party: bool, match_mode: i64, game_type: i64 },
-    PlayerCount { id: &'a str },
-    GetLocation { id: &'a str, disc: &'a str, hd: bool, up: i64, down: i64, wired: bool },
+    Heartbeat {
+        id: &'a str,
+        state: &'a str,
+        headset: bool,
+        party: bool,
+        match_mode: i64,
+        game_type: i64,
+    },
+    PlayerCount {
+        id: &'a str,
+    },
+    GetLocation {
+        id: &'a str,
+        disc: &'a str,
+        hd: bool,
+        up: i64,
+        down: i64,
+        wired: bool,
+    },
 }
 
 /// Parses a decrypted request. Keyword/value pairs are matched by name so field order changes or
-/// extra fields do not break parsing.
+/// extra fields do not break parsing. A request whose first token is not an online id is refused.
 pub fn parse(text: &str) -> Option<Request<'_>> {
     let t: Vec<&str> = text.split_whitespace().collect();
     let (id, cmd) = (*t.first()?, *t.get(1)?);
-    let kv = |key: &str| t.iter().position(|w| *w == key).and_then(|i| t.get(i + 1).copied());
+    if !crate::ticket::is_online_id(id) {
+        return None;
+    }
+    // Keywords are looked up after the command only: an online id can itself be a keyword ("party").
+    let args = &t[2..];
+    let kv = |key: &str| {
+        args.iter()
+            .position(|w| *w == key)
+            .and_then(|i| args.get(i + 1).copied())
+    };
     let num = |key: &str| kv(key).and_then(|v| v.parse::<i64>().ok());
     match cmd {
         "heartbeat" => Some(Request::Heartbeat {
             id,
-            state: t.get(2).copied().unwrap_or("unknown"),
+            state: args.first().copied().unwrap_or("unknown"),
             headset: num("headset").unwrap_or(0) != 0,
             party: num("party").unwrap_or(0) != 0,
             match_mode: num("match_mode").unwrap_or(0),
@@ -64,7 +89,9 @@ pub fn parse(text: &str) -> Option<Request<'_>> {
 /// set is cleared when the day changes, see presence.daily_reset_utc_offset_hours).
 pub fn reply(req: &Request<'_>, cfg: &PresenceConfig, players_today: usize) -> String {
     match req {
-        Request::Heartbeat { .. } => format!("heartbeat next {}", cfg.heartbeat_interval_secs.max(30)),
+        Request::Heartbeat { .. } => {
+            format!("heartbeat next {}", cfg.heartbeat_interval_secs.max(30))
+        }
         // The client adds 1 to the received value; we assume it counts itself, so send the number
         // of *other* players today (an assumption: the original server's convention is unknown).
         // TODO(player count): the convention is unverified; with one player the menu shows 0. To finish:
@@ -75,12 +102,19 @@ pub fn reply(req: &Request<'_>, cfg: &PresenceConfig, players_today: usize) -> S
         //   3. Change the formula here and the replies_match_client_parser test together.
         Request::PlayerCount { .. } => format!("playercount {}", players_today.saturating_sub(1)),
         Request::GetLocation { .. } => {
-            format!("location {:.4} {:.4}", cfg.default_location.lat, cfg.default_location.lon)
+            format!(
+                "location {:.4} {:.4}",
+                cfg.default_location.lat, cfg.default_location.lon
+            )
         }
     }
 }
 
-pub async fn serve(cfg: PresenceConfig, cipher: Arc<BlobCipher>, registry: Arc<Registry>) -> anyhow::Result<()> {
+pub async fn serve(
+    cfg: PresenceConfig,
+    cipher: Arc<BlobCipher>,
+    registry: Arc<Registry>,
+) -> anyhow::Result<()> {
     let sock = UdpSocket::bind(cfg.bind).await?;
     info!(bind = %cfg.bind, "presence listening");
     let timeout = Duration::from_secs(cfg.session_timeout_secs);
@@ -92,42 +126,72 @@ pub async fn serve(cfg: PresenceConfig, cipher: Arc<BlobCipher>, registry: Arc<R
             for id in pruner.prune(timeout) {
                 info!(online_id = %id, "presence: session expired");
             }
+            pruner.prune_tickets(timeout);
         }
     });
 
     let mut buf = vec![0u8; 0x2000];
+    let mut rejected = Throttle::new(REJECTED_LOGS_PER_MINUTE);
     loop {
         let (n, peer) = match sock.recv_from(&mut buf).await {
             Ok(v) => v,
             Err(e) => {
-                warn!(error = %e, "presence recv failed");
+                if let Some(suppressed) = rejected.allow() {
+                    warn!(error = %e, suppressed, "presence recv failed");
+                }
                 continue;
             }
         };
         let Some(plain) = cipher.decrypt_blob(&buf[..n]) else {
-            warn!(%peer, len = n, "presence: datagram failed cipher verification");
+            if let Some(suppressed) = rejected.allow() {
+                warn!(%peer, len = n, suppressed, "presence: datagram failed cipher verification");
+            }
             continue;
         };
         let end = plain.iter().position(|&b| b == 0).unwrap_or(plain.len());
         let text = String::from_utf8_lossy(&plain[..end]).into_owned();
         let Some(req) = parse(&text) else {
-            warn!(%peer, %text, "presence: unrecognized request");
+            if let Some(suppressed) = rejected.allow() {
+                warn!(%peer, %text, suppressed, "presence: unrecognized request");
+            }
             continue;
         };
-        handle(&sock, &cfg, &cipher, &registry, peer, &text, &req).await;
+        if let Err(e) = handle(&sock, &cfg, &cipher, &registry, peer, &text, &req).await {
+            if let Some(suppressed) = rejected.allow() {
+                warn!(%peer, error = %e, suppressed, "presence: send failed");
+            }
+        }
     }
 }
 
-async fn handle(sock: &UdpSocket, cfg: &PresenceConfig, cipher: &BlobCipher, registry: &Registry, peer: SocketAddr,
-                text: &str, req: &Request<'_>) {
+/// Updates the session and sends the reply; Err if sending failed.
+async fn handle(
+    sock: &UdpSocket,
+    cfg: &PresenceConfig,
+    cipher: &BlobCipher,
+    registry: &Registry,
+    peer: SocketAddr,
+    text: &str,
+    req: &Request<'_>,
+) -> std::io::Result<()> {
     let id = match req {
-        Request::Heartbeat { id, .. } | Request::PlayerCount { id } | Request::GetLocation { id, .. } => *id,
+        Request::Heartbeat { id, .. }
+        | Request::PlayerCount { id }
+        | Request::GetLocation { id, .. } => *id,
     };
     if !registry.has_ticket(peer.ip()) {
         debug!(%peer, online_id = id, "presence: no login handshake seen from this address");
     }
     let new = registry.touch(id, peer, |s| {
-        if let Request::Heartbeat { state, headset, party, match_mode, game_type, .. } = req {
+        if let Request::Heartbeat {
+            state,
+            headset,
+            party,
+            match_mode,
+            game_type,
+            ..
+        } = req
+        {
             s.state = state.to_string();
             s.headset = *headset;
             s.party = *party;
@@ -147,10 +211,9 @@ async fn handle(sock: &UdpSocket, cfg: &PresenceConfig, cipher: &BlobCipher, reg
     if blob.len() > CLIENT_RECV_MAX {
         warn!(%peer, len = blob.len(), "presence: reply exceeds the client's 0xff-byte buffer");
     }
-    match sock.send_to(&blob, peer).await {
-        Ok(_) => info!(%peer, request = %text, reply = %out, "presence"),
-        Err(e) => warn!(%peer, error = %e, "presence: send failed"),
-    }
+    sock.send_to(&blob, peer).await?;
+    info!(%peer, request = %text, reply = %out, "presence");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -163,7 +226,10 @@ mod tests {
             bind: "127.0.0.1:0".parse().unwrap(),
             heartbeat_interval_secs: 45,
             session_timeout_secs: 120,
-            default_location: Location { lat: 34.0542, lon: -118.2411 },
+            default_location: Location {
+                lat: 34.0542,
+                lon: -118.2411,
+            },
             daily_reset_utc_offset_hours: 0,
         }
     }
@@ -173,26 +239,103 @@ mod tests {
         // Note the double space after the state in heartbeat, as the client sends it.
         assert_eq!(
             parse("Player1 heartbeat playing  headset 1 party 0 match_mode 3 gametype 7"),
-            Some(Request::Heartbeat { id: "Player1", state: "playing", headset: true, party: false, match_mode: 3, game_type: 7 })
+            Some(Request::Heartbeat {
+                id: "Player1",
+                state: "playing",
+                headset: true,
+                party: false,
+                match_mode: 3,
+                game_type: 7
+            })
         );
-        assert_eq!(parse("Player1 playercount"), Some(Request::PlayerCount { id: "Player1" }));
+        assert_eq!(
+            parse("Player1 playercount"),
+            Some(Request::PlayerCount { id: "Player1" })
+        );
         assert_eq!(
             parse("Player1 get-location disc XXXX00000 hdsd 1 up 1200 down 8000 wired 1"),
-            Some(Request::GetLocation { id: "Player1", disc: "XXXX00000", hd: true, up: 1200, down: 8000, wired: true })
+            Some(Request::GetLocation {
+                id: "Player1",
+                disc: "XXXX00000",
+                hd: true,
+                up: 1200,
+                down: 8000,
+                wired: true
+            })
         );
         assert_eq!(parse("Player1 bogus"), None);
+    }
+
+    /// An online id that equals a keyword does not shadow that keyword's value; a first token that
+    /// is not an online id gets no reply.
+    #[test]
+    fn keywords_follow_the_command_and_ids_are_checked() {
+        assert_eq!(
+            parse("party heartbeat menu  headset 0 party 1 match_mode 0 gametype -1"),
+            Some(Request::Heartbeat {
+                id: "party",
+                state: "menu",
+                headset: false,
+                party: true,
+                match_mode: 0,
+                game_type: -1
+            })
+        );
+        assert_eq!(
+            parse("down get-location disc XXXX00000 hdsd 0 up 900 down 4000 wired 0"),
+            Some(Request::GetLocation {
+                id: "down",
+                disc: "XXXX00000",
+                hd: false,
+                up: 900,
+                down: 4000,
+                wired: false
+            })
+        );
+        for bad in [
+            "x playercount",
+            "Player.1 playercount",
+            "Player1234567890XY heartbeat menu",
+        ] {
+            assert_eq!(parse(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
     fn replies_match_client_parser() {
         let c = cfg();
-        assert_eq!(reply(&Request::PlayerCount { id: "x" }, &c, 5), "playercount 4");
         assert_eq!(
-            reply(&Request::Heartbeat { id: "x", state: "menu", headset: false, party: false, match_mode: 0, game_type: -1 }, &c, 1),
+            reply(&Request::PlayerCount { id: "x" }, &c, 5),
+            "playercount 4"
+        );
+        assert_eq!(
+            reply(
+                &Request::Heartbeat {
+                    id: "x",
+                    state: "menu",
+                    headset: false,
+                    party: false,
+                    match_mode: 0,
+                    game_type: -1
+                },
+                &c,
+                1
+            ),
             "heartbeat next 45"
         );
         assert_eq!(
-            reply(&Request::GetLocation { id: "x", disc: "", hd: false, up: 0, down: 0, wired: false }, &c, 1),
+            reply(
+                &Request::GetLocation {
+                    id: "x",
+                    disc: "",
+                    hd: false,
+                    up: 0,
+                    down: 0,
+                    wired: false
+                },
+                &c,
+                1
+            ),
             "location 34.0542 -118.2411"
         );
     }

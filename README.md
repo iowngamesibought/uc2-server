@@ -8,7 +8,7 @@ This project is not affiliated with or endorsed by the game's developer or publi
 
 The console only reaches this server if **two specific domains** that the game contacts resolve to this machine. Without that override the console keeps trying the original hosts, which no longer serve the game, and nothing arrives here.
 
-This README deliberately doesn't name the domains. To find them, **ask an AI agent to follow [AGENTS.md](AGENTS.md)**: it identifies both names from publicly shared packet captures of the game and from your own executable, then walks you through the override (router or dnsmasq, proxy exemptions) and checks that it works. Once you have the names, the setup itself is two lines (see [Network setup](#network-setup)).
+This README deliberately doesn't name the domains. To find them, **ask an AI agent to follow [AGENTS.md](AGENTS.md)**: it works out both names from your own executable, then walks you through the override (router or dnsmasq, proxy exemptions) and checks that it works. Once you have the names, the setup itself is two lines (see [Network setup](#network-setup)).
 
 ## Required: three files from your copy of the game
 
@@ -41,6 +41,8 @@ Relative paths are resolved from the config file's folder, so the files can also
 
 ## Run
 
+Building needs a Rust toolchain (https://rustup.rs); there is no prebuilt binary.
+
 ```
 cp uc2-server.example.toml uc2-server.toml    # set public_host and the three files above
 cargo run --release -- run --config uc2-server.toml
@@ -59,13 +61,13 @@ cargo run --release -- run --config uc2-server.toml
   ```
   To find the two names, see [Required: a DNS override](#required-a-dns-override). The login and presence address comes from `public_host` inside the served config, so no other names are needed. If a proxy or TUN sits in front of the console, exempt both names from fake-IP and route them directly.
 - **public_host:** this machine's LAN address as the console sees it. The server refuses to start with a placeholder or `0.0.0.0`; the bind addresses can stay `0.0.0.0`.
-- **Firewall:** allow inbound TCP 80 and UDP 3232/3233.
+- **Firewall:** allow inbound TCP 80 and UDP 3232/3233 from your local network only, and don't forward these ports on your router: everything the server serves is derived from your game files.
 - **Ports:** the console uses the same port numbers locally, so run one server per LAN, and not on the same host as an emulator running the game.
 - **Cache:** the console caches the config keyed on `Last-Modified`. The server derives that date from the content, so restarts don't force a re-download, but any config change does.
 
 ## Tests
 
-`cargo test` covers the cipher (standard Blowfish vector, round trips), the config module (golden bytes, merging), archive round trips, client message formats, the daily player count, HTTP headers and paths, and config validation.
+`cargo test` covers the cipher (standard Blowfish vector, round trips), the config module (golden bytes, merging), archive round trips, client message formats and online-id checks, the daily player count, ticket and log-throttle state, HTTP headers, paths, caching and the per-address connection cap, damaged executables, and config validation.
 
 ## Open questions
 

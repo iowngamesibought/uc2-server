@@ -25,29 +25,39 @@ impl BlobCipher {
     /// Reads both keys from the user's decrypted executable; nothing is written to disk.
     pub fn from_executable(path: &std::path::Path) -> Result<Self> {
         let elf = Elf::open(path)?;
-        let printable = |k: &[u8], len: usize| k.len() == len && k.iter().all(|b| b.is_ascii_graphic());
+        let printable =
+            |k: &[u8], len: usize| k.len() == len && k.iter().all(|b| b.is_ascii_graphic());
         let found: Vec<_> = BUILDS
             .iter()
             .filter_map(|&(label, mac, bf)| {
                 let mac_key = elf.cstr(mac, 128).ok()?;
                 let bf_key = elf.cstr(bf, 128).ok()?;
-                (printable(&mac_key, 64) && printable(&bf_key, 20)).then_some((label, mac_key, bf_key))
+                (printable(&mac_key, 64) && printable(&bf_key, 20))
+                    .then_some((label, mac_key, bf_key))
             })
             .collect();
         let [(label, mac_key, bf_key)] = found.as_slice() else {
-            bail!("{} known key locations match this executable; expected exactly one. It is not the main executable of a supported build (GOTY 01.10 or the earlier build), or it is a different file; see AGENTS.md", found.len());
+            bail!(
+                "{} known key locations match this executable; expected exactly one. It is not the main executable of a supported build (GOTY 01.10 or the earlier build), or it is a different file; see AGENTS.md",
+                found.len()
+            );
         };
         tracing::info!(build = label, "cipher keys found");
         Self::new(mac_key, bf_key)
     }
 
     pub fn new(mac_key: &[u8], bf_key: &[u8]) -> Result<Self> {
-        let bf = Blowfish::new_from_slice(bf_key).map_err(|_| anyhow::anyhow!("invalid Blowfish key length"))?;
-        Ok(Self { mac_key: mac_key.to_vec(), bf })
+        let bf = Blowfish::new_from_slice(bf_key)
+            .map_err(|_| anyhow::anyhow!("invalid Blowfish key length"))?;
+        Ok(Self {
+            mac_key: mac_key.to_vec(),
+            bf,
+        })
     }
 
     fn mac(&self, data: &[u8]) -> [u8; 20] {
-        let mut m = <Hmac<Sha1> as Mac>::new_from_slice(&self.mac_key).expect("HMAC accepts any key length");
+        let mut m = <Hmac<Sha1> as Mac>::new_from_slice(&self.mac_key)
+            .expect("HMAC accepts any key length");
         m.update(data);
         m.finalize().into_bytes().into()
     }
@@ -55,7 +65,11 @@ impl BlobCipher {
     fn ecb(&self, data: &mut [u8], encrypt: bool) {
         for block in data.chunks_exact_mut(8) {
             let b = GenericArray::from_mut_slice(block);
-            if encrypt { self.bf.encrypt_block(b) } else { self.bf.decrypt_block(b) }
+            if encrypt {
+                self.bf.encrypt_block(b)
+            } else {
+                self.bf.decrypt_block(b)
+            }
         }
     }
 

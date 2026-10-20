@@ -5,8 +5,8 @@ You are helping someone run this server for their own copy of the game. Work thr
 ## Ground rules
 
 - **Use only the user's own copy of the game.** Never download game files, decrypted executables, keys or license files from the internet, and never suggest where to get them. If the user doesn't have the files, stop and tell them what's missing.
-- **Never put game-derived files in this repository** (executables, archives, generated output, captures). Keep them in a folder outside it, or in a local `game/` folder the user doesn't commit.
-- **Public packet captures are for finding host names only.** Don't copy anything else out of them: no file bodies, no other players' online IDs, no tickets.
+- **Never put game-derived files in this repository** (executables, archives, generated output, decompiler projects or exports, server logs). Keep them in a folder outside it, or in a local `game/` folder the user doesn't commit.
+- **The host names you find in step 2 go into the user's DNS setup only.** Don't write them into this repository (code, docs, config examples, commits or issues), and don't copy anything else out of the executable: no keys, code or text. The server reads what it needs from the user's files at runtime.
 - Run commands only with the user's agreement when they change their system (firewall rules, DNS, router settings).
 
 ## 1. Supply the required files
@@ -15,7 +15,7 @@ The server needs three files from the user's own installed copy. This guide deli
 
 ### Where to look
 
-Ask the user where their copy of the installed game is and which platform it's for; they can give you the folder and that context. Within it, the files you need sit in the game's **data folder**: the one that holds the main executable and a `build/main/` tree of archives.
+Ask the user where their copy of the installed game is and which platform it's for; they can give you the folder and that context. Copying the files off the console is the user's job, like decrypting the executable below; ask them for the files once they have them on this machine. Within it, the files you need sit in the game's **data folder**: the one that holds the main executable and a `build/main/` tree of archives.
 
 Copy the three files into a `game/` folder next to the user's `uc2-server.toml` (git-ignored in this project), keeping their original names, and set `executable`, `script_archive` and `text_archive` to `game/<file name>`. Absolute paths elsewhere work too. Never place them anywhere that gets committed.
 
@@ -36,7 +36,7 @@ Copy the three files into a `game/` folder next to the user's `uc2-server.toml` 
 
 **Check:**
 1. Set `public_host` to the server machine's LAN address as the console sees it (not `0.0.0.0`, not a placeholder).
-2. Run `cargo run --release -- run --config uc2-server.toml` (or the packaged binary).
+2. Run `cargo run --release -- run --config uc2-server.toml` from this repository. There is no prebuilt binary: if `cargo` is missing, install the Rust toolchain first (rustup, https://rustup.rs).
 3. The log must show:
    - `cipher keys found build=...`. Errors and what they mean:
      - **"not a big-endian ELF64"**: the executable is still encrypted, or it's the wrong file.
@@ -45,40 +45,40 @@ Copy the three files into a `game/` folder next to the user's `uc2-server.toml` 
    - `networking texts ready from_game=...` listing language indexes. A **"not the text archive"** error means `text_archive` is wrong.
    - `live-data HTTP listening`, `auth (ticket echo) listening` and `presence listening`. A bind error usually means port 80 is in use (e.g. IIS) or another server instance is running.
 
-## 2. Find the host names for the DNS override
+## 2. Find the host names in the user's executable
 
-This guide deliberately doesn't name the hosts. Work them out from publicly shared packet captures of the game's online mode (community collections of console network captures often include it), plus the user's own executable. Write only the two host names down; don't commit the capture or copy anything else from it.
+This guide deliberately doesn't name the hosts. Work them out from the **user's own decrypted executable** (the file set as `executable`); no packet captures are needed. Write only the host names down, and don't commit them or anything else from the executable.
 
 There are **two** names, and both must resolve to `public_host`. The server answers for any `Host` header, so only DNS needs changing.
 
-### What the traffic looks like
+### What the client does
 
-- **Plain HTTP over TCP port 80.** No TLS. The client sends the `Host` header and uses an HTTP-library user agent rather than a browser one.
-- **When:** during the online start. After the console's own network test traffic and before or around the login handshake (UDP to port 3233), then again right after the platform's matchmaking connections.
-- **The config host** looks like a **cloud object-storage bucket addressed by host name**: `<bucket name>.<storage provider's domain>`. The bucket name is a short dotted name with a game-specific prefix and words like "final"/"prod". Its responses come from that storage provider: `Server` header, request-id style headers, `ETag`, `Last-Modified`, `Content-Type: application/octet-stream`.
-- **Requests to the config host** follow these patterns (paths only; any of them identifies the host):
-  - `/<name>.bin.psarc.crypt` at the root: the online config archive, fetched first.
-  - `/build/main/text1/<n>.networking.crypt`: per-language text; `n` is a small number.
-  - `/build/main/pak22/<…>.pak.psarc.crypt`: map data packs. There may be many, and they're often cut off mid-body (the client only reads the date).
-  - `/userdata/<online id>.txt.crypt`: usually answered 403 or 404.
-- Everything the config host serves ends in **`.crypt`**: encrypted bodies that look random, with a 24-byte header starting with the big-endian plaintext length.
-- **The content host** has the **same bucket name** under the **game developer's own domain**. The client only contacts it for optional downloads, so it is often **absent from captures**.
-- **Not these:** the platform vendor's own domains (network-speed tests, profile and avatar images, trophy data, title resource XMLs, matchmaking on ports 3478/443) and message-queue POSTs to a queue service domain. They stay as they are.
+- It downloads its online config and its per-language texts over **plain HTTP** (port 80, no TLS) from a **cloud object-storage bucket addressed by host name**: `<bucket name>.<storage provider's domain>`. This is the **config host**. Requests look like `/<name>.bin.psarc.crypt` (the online config archive, fetched first), `/build/main/text1/<n>.networking.crypt`, `/build/main/pak22/<…>.pak.psarc.crypt` (map data; the client only reads the date) and `/userdata/<online id>.txt.crypt`.
+- It builds a second base address from the same bucket name under the **game developer's own domain** (the **content host**), used only for optional downloads. Map it too; it is harmless when unused.
+- Every other address the client uses (the login and presence ports) comes from the config this server generates, so no other names are needed.
 
 ### How to find them
 
-1. **Config host from a capture:** pick one of the game connecting to multiplayer (before the official shutdown is best) and list the plain-HTTP requests:
-   ```
-   tshark -r <capture> -Y "http.request" -T fields -e http.host -e http.request.uri
-   ```
-   Take the host whose paths match the patterns above. If the capture has no HTTP requests (e.g. it only holds encrypted traffic), check its DNS answers (`-Y dns -e dns.qry.name`) for a name of the bucket shape described above.
-2. **Content host from the user's executable:**
-   - `strings -n 8 <executable> | grep "http://%s"` shows URL formats of the form `http://%s.<domain>`. One domain is the config host's; the other belongs to the content host.
-   - The executable also holds several candidate bucket names (development, beta, production). Use the one the config host from step 1 starts with.
-   - Content host = that bucket name + `.` + the other format's domain.
-3. **Sanity checks:**
-   - The config host = bucket name + `.` + the first format's domain. If it doesn't fit, you've picked the wrong host or the wrong format.
-   - Neither name belongs to the platform vendor.
+List the executable's strings with `strings -n 6 <executable>` (Linux, macOS), or this Python equivalent (any platform; it only reads the file):
+```
+python -I -c "import re,sys;[print(m.group().decode()) for m in re.finditer(rb'[\x20-\x7e]{6,}',open(sys.argv[1],'rb').read())]" <executable>
+```
+Pipe the output into `grep`/`findstr` rather than saving it, or save it outside the repository.
+
+1. **The two domains:** the strings starting with `http://%s.` are URL formats: there are exactly two, `http://%s.<domain>`. To tell them apart:
+   - The **storage provider's domain** also appears elsewhere on its own: as a bare string (exactly the domain) and as `%s.<domain>` without the scheme.
+   - The **developer's domain** appears in e-mail addresses instead, never on its own.
+2. **The bucket name:** look for short dotted names ending in `.dev` or `.prod` (pattern `^[a-z0-9]+(\.[a-z0-9]+)*\.(dev|prod)$`). There are two pairs with the same game-specific prefix: a "beta" pair and a "final" pair. The live-data bucket is the **"final" one ending in `.prod`**: retail accounts use production, and the beta buckets belong to the game's beta. Don't go by length: the beta name is the shorter one.
+3. **Compose the names:**
+   - config host = `<bucket>.<storage provider's domain>`
+   - content host = `<bucket>.<developer's domain>`
+4. **Sanity checks:**
+   - Both names start with the same bucket name; only the domain differs.
+   - Neither name belongs to the console platform's own vendor.
+   - Don't override anything else: not the message-queue service the client posts match reports to, and not the platform vendor's own domains (network tests, profile images, trophies, matchmaking).
+   - The executable holds no complete URL to compare the result with. The final confirmation is the server log in step 3: the console's first config download shows the config host as `host=`.
+
+**Optional confirmation with a decompiler:** load the executable (a 64-bit big-endian PowerPC ELF) in a decompiler such as Ghidra and look at the references to the two `http://%s.` strings. The online start-up function uses both: it builds both base addresses from one bucket name, then downloads the config archive from the storage-provider one. Keep the decompiler project and any exports outside this repository.
 
 ## 3. Set up the DNS override
 
@@ -93,9 +93,9 @@ Other options: a local DNS server, or the router's static-host setting. Then set
 
 **Check:**
 1. `nslookup <config host> <console's DNS server>` must return `public_host`; the same for the content host. Query the console's DNS server explicitly: the machine you run the check on may use a different resolver.
-2. Allow inbound TCP 80 and UDP 3232–3233 on the server machine (the Windows package has `allow-firewall.cmd`).
+2. Allow inbound TCP 80 and UDP 3232–3233 on the server machine, from the local network only. Don't forward these ports on the router: everything the server serves is derived from the user's game files.
 3. Start the game's online mode. The server log should show, in order:
-   - `GET /net-patch9.bin.psarc.crypt 200` (twice, when the config changed since the console last downloaded it);
+   - `http method=GET host=<config host> path=/net-patch9.bin.psarc.crypt status=200` (twice, when the config changed since the console last downloaded it). The `host=` value confirms the config host from step 2;
    - `auth: ticket received` and `auth: echoed`;
    - `GET /build/main/text1/<n>.networking.crypt 200`;
    - `GET /userdata/... 404` (normal);
@@ -107,6 +107,32 @@ Other options: a local DNS server, or the router's static-host setting. Then set
 |---|---|
 | No request reaches the server | DNS still resolves the config host elsewhere (check against the console's DNS server), a proxy intercepts it, or the firewall blocks port 80 |
 | Config downloaded but no auth line | `public_host` isn't reachable from the console, or UDP 3233 is blocked |
+| `auth: datagram is not a login ticket with a valid online id` from the console's address | The server only answers well-formed login tickets, and this one failed the check. Report it as a bug with the `len=` value from that line |
 | Console stuck on "connecting" after auth, no further requests | `script_archive` missing, or the console is using an old cached config; the server must send `Last-Modified` (it does by default) |
 | "Error syncing text" | The text for the console's language index wasn't served: check `text_archive` and the `networking texts ready` log line |
 | Only one `GET /net-patch9...` per start, and changes have no effect | The console's cached copy is considered current. Any change to the served config changes its date and forces a download. |
+| "UNKNOWN STRING" in place of some online menu labels | The served networking text is the shipped version, which lacks strings the online config uses. See below. |
+
+### "UNKNOWN STRING" in the online menus
+
+The setup is working: login, presence and text sync all succeed, and gameplay is unaffected. By default the server sends each language's networking text from `text_archive`, which is the version that shipped with the game. The live service later sent a newer version of that table for some languages, with many more strings, and the online config refers to some of them. Each string missing from the shipped table shows as "UNKNOWN STRING".
+
+**Fix:** serve a newer table for the console's language with `text_overrides` in `uc2-server.toml` (see `uc2-server.example.toml`). It maps a language index to a ready file:
+```
+text_overrides = { "<n>" = "<path to file>" }
+```
+- `<n>` is the number in the console's `GET /build/main/text1/<n>.networking.crypt` request in the server log.
+- Several indexes for the same language (e.g. two English variants) can point to the same file.
+- Indexes without an override still get the shipped text.
+
+The user must provide that file; it is their responsibility. Don't explain where to get it, don't extract it from packet captures yourself, and never download it. Keep it outside the repository (absolute path) or in the git-ignored `game/` folder.
+
+| How to recognise it | |
+|---|---|
+| What it is | The live form of one language's networking text: a single file, not an archive (`list-archive` doesn't apply). Named like the request path, `<n>.networking.crypt`. |
+| Form | Already **encrypted**: the server sends it unchanged. Looks random, with a 24-byte header starting with the big-endian plaintext length, like every other `.crypt` body the config host serves. |
+| Size | A little larger than the shipped `<n>.networking` entries in `text_archive` (those are about 12–24 KB), because it holds more strings. |
+
+**Check:**
+1. The startup log shows `networking text override index=<n> source=...` for each mapped index, and `networking texts ready ... overrides=<count>`. Those indexes no longer appear in `from_game`.
+2. Re-enter online mode. The log shows `GET /build/main/text1/<n>.networking.crypt 200`, and the labels now display. If the console reports "Error syncing text" instead, the file probably isn't a valid encrypted text table for this build: remove the override and ask the user for the right file.

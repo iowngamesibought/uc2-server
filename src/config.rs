@@ -92,8 +92,12 @@ pub struct NetBinOverrides {
     pub json: Option<PathBuf>,
 }
 
-fn default_interval() -> u32 { 30 }
-fn default_timeout() -> u64 { 120 }
+fn default_interval() -> u32 {
+    30
+}
+fn default_timeout() -> u64 {
+    120
+}
 
 /// Queue paths written into the served config. The client posts reports to them on a queue service
 /// whose host is fixed in the client; nothing here receives them, so the posts fail harmlessly.
@@ -118,22 +122,33 @@ const TUS_MIRROR_QUEUE: &str = "/uc2-tus-mirror";
 /// as a silent failure on the client, so it is rejected at startup.
 fn check_public_host(host: &str) -> Result<()> {
     let h = host.trim();
-    let wildcard = h.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_unspecified());
+    let wildcard = h
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_unspecified());
     if h.is_empty() || wildcard || h.contains("CHANGE") {
-        anyhow::bail!("public_host = {host:?}: set it to this machine's LAN address as the client sees it \
-                       (e.g. 192.168.1.50); the bind addresses can stay 0.0.0.0");
+        anyhow::bail!(
+            "public_host = {host:?}: set it to this machine's LAN address as the client sees it \
+                       (e.g. 192.168.1.50); the bind addresses can stay 0.0.0.0"
+        );
     }
     Ok(())
 }
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let mut cfg: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let mut cfg: Config =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         check_public_host(&cfg.public_host)?;
         let base = path.parent().unwrap_or(Path::new("."));
         cfg.executable = base.join(&cfg.executable);
-        for p in [&mut cfg.data_dir, &mut cfg.netbin.json, &mut cfg.script_archive, &mut cfg.text_archive] {
+        for p in [
+            &mut cfg.data_dir,
+            &mut cfg.netbin.json,
+            &mut cfg.script_archive,
+            &mut cfg.text_archive,
+        ] {
             if let Some(rel) = p.take() {
                 *p = Some(base.join(rel));
             }
@@ -141,12 +156,42 @@ impl Config {
         for path in cfg.text_overrides.values_mut() {
             *path = base.join(&*path);
         }
+        cfg.check_data_dir()?;
         Ok(cfg)
+    }
+
+    /// Everything in data_dir is served to anyone who can reach the HTTP port, so it must not hold
+    /// the game files (above all the decrypted executable). Checked on the resolved real paths.
+    fn check_data_dir(&self) -> Result<()> {
+        let Some(configured) = self.data_dir.as_deref() else {
+            return Ok(());
+        };
+        let Ok(dir) = std::fs::canonicalize(configured) else {
+            return Ok(());
+        };
+        let files = [
+            Some(&self.executable),
+            self.script_archive.as_ref(),
+            self.text_archive.as_ref(),
+        ];
+        for file in files.into_iter().flatten() {
+            if std::fs::canonicalize(file).is_ok_and(|f| f.starts_with(&dir)) {
+                anyhow::bail!(
+                    "data_dir = {}: it contains {}, and everything in data_dir is served to anyone who can \
+                               reach the HTTP port; use a folder that holds only the extra static files",
+                    configured.display(),
+                    file.display()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// The installed net.bin from `script_archive`, if configured.
     pub fn base_net_module(&self) -> Result<Option<Vec<u8>>> {
-        let Some(path) = &self.script_archive else { return Ok(None) };
+        let Some(path) = &self.script_archive else {
+            return Ok(None);
+        };
         let blob = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
         crate::netbin::read_archive_entry(&blob, "net.bin")
             .with_context(|| format!("script_archive = {}: not the script archive (it must be an archive \
@@ -158,8 +203,10 @@ impl Config {
     /// The server configs: from the JSON override, or derived from public_host and our bind ports.
     pub fn netbin_config(&self) -> Result<NetBinConfig> {
         if let Some(path) = &self.netbin.json {
-            let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-            return serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()));
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            return serde_json::from_str(&text)
+                .with_context(|| format!("parsing {}", path.display()));
         }
         let presence_port = self.presence.bind.port() as u32;
         let server = ServerConfig {
@@ -186,7 +233,10 @@ impl Config {
             param38: 64,
             tag40: 0,
         };
-        Ok(NetBinConfig { config_a: server.clone(), config_b: server })
+        Ok(NetBinConfig {
+            config_a: server.clone(),
+            config_b: server,
+        })
     }
 }
 
@@ -199,10 +249,15 @@ mod tests {
     fn example_config_parses() {
         let text = include_str!("../uc2-server.example.toml").replace("CHANGE-ME", "192.168.1.50");
         let cfg: Config = toml::from_str(&text).unwrap();
-        assert_eq!(cfg.netbin_config().unwrap().config_a.stats_queue, "/uc2-stats");
+        assert_eq!(
+            cfg.netbin_config().unwrap().config_a.stats_queue,
+            "/uc2-stats"
+        );
         assert_eq!(cfg.presence.heartbeat_interval_secs, 30);
         assert_eq!(cfg.presence.session_timeout_secs, 120);
-        assert!(cfg.text_overrides.is_empty() && cfg.data_dir.is_none() && cfg.netbin.json.is_none());
+        assert!(
+            cfg.text_overrides.is_empty() && cfg.data_dir.is_none() && cfg.netbin.json.is_none()
+        );
     }
 
     /// The minimal config (only the required keys) gets the documented defaults.
@@ -223,12 +278,46 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(cfg.netbin_config().unwrap().config_a.stats_queue, "/uc2-stats");
+        assert_eq!(
+            cfg.netbin_config().unwrap().config_a.stats_queue,
+            "/uc2-stats"
+        );
         assert_eq!(cfg.presence.heartbeat_interval_secs, 30);
         assert_eq!(cfg.presence.session_timeout_secs, 120);
         assert_eq!(cfg.presence.daily_reset_utc_offset_hours, 0);
-        assert_eq!((cfg.presence.default_location.lat, cfg.presence.default_location.lon), (0.0, 0.0));
+        assert_eq!(
+            (
+                cfg.presence.default_location.lat,
+                cfg.presence.default_location.lon
+            ),
+            (0.0, 0.0)
+        );
         assert!(cfg.text_overrides.is_empty() && cfg.data_dir.is_none());
+    }
+
+    /// A data_dir that holds a game file is refused; one beside the game folder is fine.
+    #[test]
+    fn data_dir_must_not_hold_the_game_files() {
+        let dir = std::env::temp_dir().join(format!("uc2-config-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("game")).unwrap();
+        std::fs::create_dir_all(dir.join("static")).unwrap();
+        std::fs::write(dir.join("game/exe"), b"x").unwrap();
+        let load = |data_dir: &str| {
+            let text = format!(
+                "public_host = \"192.168.1.50\"\nexecutable = \"game/exe\"\ndata_dir = \"{data_dir}\"\n\
+                                [http]\nbind = \"0.0.0.0:80\"\n[auth]\nbind = \"0.0.0.0:3233\"\n\
+                                [presence]\nbind = \"0.0.0.0:3232\"\n"
+            );
+            std::fs::write(dir.join("uc2-server.toml"), text).unwrap();
+            Config::load(&dir.join("uc2-server.toml"))
+        };
+        let (root, game, separate) = (load("."), load("game"), load("static"));
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            root.is_err() && game.is_err(),
+            "a folder holding the executable is refused"
+        );
+        assert!(separate.is_ok(), "{:?}", separate.err());
     }
 
     #[test]

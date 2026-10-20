@@ -30,7 +30,10 @@ fn fields(mut b: &[u8]) -> Vec<Field<'_>> {
         if b.len() < 4 + len {
             break;
         }
-        out.push(Field { ty, data: &b[4..4 + len] });
+        out.push(Field {
+            ty,
+            data: &b[4..4 + len],
+        });
         b = &b[4 + len..];
     }
     out
@@ -41,14 +44,30 @@ fn text(d: &[u8]) -> String {
     String::from_utf8_lossy(&d[..end]).into_owned()
 }
 
-fn be_u64(d: &[u8]) -> Option<u64> { d.try_into().ok().map(u64::from_be_bytes) }
-fn be_u32(d: &[u8]) -> Option<u32> { d.try_into().ok().map(u32::from_be_bytes) }
+fn be_u64(d: &[u8]) -> Option<u64> {
+    d.try_into().ok().map(u64::from_be_bytes)
+}
+fn be_u32(d: &[u8]) -> Option<u32> {
+    d.try_into().ok().map(u32::from_be_bytes)
+}
+
+/// The platform's online id rule: 3 to 16 letters, digits, '-' or '_'. Real clients always send
+/// one; anything else is not a player.
+pub fn is_online_id(id: &str) -> bool {
+    (3..=16).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
 
 pub fn parse(ticket: &[u8]) -> Option<TicketInfo> {
     if ticket.len() < 8 {
         return None;
     }
-    let mut info = TicketInfo { version: u32::from_be_bytes(ticket[..4].try_into().ok()?), ..Default::default() };
+    let mut info = TicketInfo {
+        version: u32::from_be_bytes(ticket[..4].try_into().ok()?),
+        ..Default::default()
+    };
     let top = fields(&ticket[8..]);
     let body = top.iter().find(|f| f.ty == 0x3000)?;
     // Body field order: serial, issuer id, issued, expires, user id, online id, region, domain,
@@ -100,5 +119,15 @@ mod tests {
         assert_eq!(info.user_id, Some(42));
         assert_eq!(info.online_id.as_deref(), Some("TestPlayer"));
         assert_eq!(info.service_id.as_deref(), Some("XX0000-TEST00000_00"));
+    }
+
+    #[test]
+    fn online_ids_follow_the_platform_rule() {
+        for ok in ["abc", "TestPlayer", "a-b_c", "Player123456789X"] {
+            assert!(is_online_id(ok), "{ok:?}");
+        }
+        for bad in ["", "ab", "Player1234567890X", "a b", "a.b", "a\0b", "ä12"] {
+            assert!(!is_online_id(bad), "{bad:?}");
+        }
     }
 }

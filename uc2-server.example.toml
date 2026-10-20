@@ -13,7 +13,8 @@ text_archive   = "game/<text archive>"
 # text_overrides = { "2" = "game/<file>.crypt" }
 
 # Optional: a folder of extra static files to serve as is, e.g. languages/english/motd.jpg for the
-# message-of-the-day image. Generated files take precedence.
+# message-of-the-day image. Generated files take precedence. Everything in it is served to anyone who
+# can reach the HTTP port, so the server refuses to start if it holds the three game files above.
 # data_dir = "static"
 
 [http]

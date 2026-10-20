@@ -55,10 +55,18 @@ pub struct ServerConfig {
     pub tag40: u32,
 }
 
-fn d20() -> u32 { 20 }
-fn d12() -> u32 { 12 }
-fn d32() -> u32 { 32 }
-fn d64() -> u32 { 64 }
+fn d20() -> u32 {
+    20
+}
+fn d12() -> u32 {
+    12
+}
+fn d32() -> u32 {
+    32
+}
+fn d64() -> u32 {
+    64
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,13 +81,24 @@ struct Builder {
 }
 
 impl Builder {
-    fn new() -> Self { Self { buf: vec![0; 0x10], relocs: Vec::new() } }
-    fn here(&self) -> usize { self.buf.len() }
-    fn align(&mut self, n: usize) -> usize {
-        while self.buf.len() % n != 0 { self.buf.push(0) }
+    fn new() -> Self {
+        Self {
+            buf: vec![0; 0x10],
+            relocs: Vec::new(),
+        }
+    }
+    fn here(&self) -> usize {
         self.buf.len()
     }
-    fn u32(&mut self, v: u32) { self.buf.extend_from_slice(&v.to_be_bytes()) }
+    fn align(&mut self, n: usize) -> usize {
+        while self.buf.len() % n != 0 {
+            self.buf.push(0)
+        }
+        self.buf.len()
+    }
+    fn u32(&mut self, v: u32) {
+        self.buf.extend_from_slice(&v.to_be_bytes())
+    }
     fn ptr(&mut self, target: Option<usize>) {
         match target {
             None => self.u32(0),
@@ -100,20 +119,35 @@ impl Builder {
 fn server_config(b: &mut Builder, c: &ServerConfig) -> usize {
     // Unique strings in first-use order (pinned by the module_bytes_are_stable test).
     let fields: [Option<&str>; 8] = [
-        Some(&c.host_a), Some(&c.host_b), Some(&c.auth_host), c.stats_prefix.as_deref(),
-        Some(&c.stats_queue), Some(&c.auth_host2), Some(&c.tus_mirror_queue), Some(&c.nat_queue),
+        Some(&c.host_a),
+        Some(&c.host_b),
+        Some(&c.auth_host),
+        c.stats_prefix.as_deref(),
+        Some(&c.stats_queue),
+        Some(&c.auth_host2),
+        Some(&c.tus_mirror_queue),
+        Some(&c.nat_queue),
     ];
     let mut order: Vec<&str> = Vec::new();
-    for s in fields.iter().flatten().copied().chain(c.stats_queues.iter().map(String::as_str)) {
+    for s in fields
+        .iter()
+        .flatten()
+        .copied()
+        .chain(c.stats_queues.iter().map(String::as_str))
+    {
         if !order.contains(&s) {
             order.push(s);
         }
     }
     let mut at: HashMap<&str, usize> = HashMap::new();
-    for s in &order { at.insert(s, b.cstring(s)); }
+    for s in &order {
+        at.insert(s, b.cstring(s));
+    }
     b.align(4);
     let items = b.here();
-    for q in &c.stats_queues { b.ptr(Some(at[q.as_str()])) }
+    for q in &c.stats_queues {
+        b.ptr(Some(at[q.as_str()]))
+    }
     let array = b.here();
     b.u32(c.stats_queues.len() as u32);
     b.ptr(Some(items));
@@ -121,20 +155,23 @@ fn server_config(b: &mut Builder, c: &ServerConfig) -> usize {
     b.align(16);
     let obj = b.here();
     let p = |f: Option<&str>| f.map(|s| at[s]);
-    b.ptr(p(fields[0])); b.u32(c.port_a);        // +0x00 hostA, +0x04 presence port (u16 at +6)
-    b.ptr(p(fields[1])); b.u32(c.port_b);        // +0x08 hostB, +0x0c
-    b.ptr(p(fields[2])); b.u32(c.auth_port);     // +0x10 auth host (also the presence IP), +0x14 auth port
-    b.ptr(p(fields[3]));                         // +0x18 stats upload prefix (NULL = disabled)
-    b.ptr(p(fields[4]));                         // +0x1c SQS stats queue
-    b.ptr(Some(array));                          // +0x20 typed array of queue paths
-    b.u32(c.session_minimum);                    // +0x24
-    b.u32(c.net_game_param44);                   // +0x28
-    b.ptr(p(fields[5]));                         // +0x2c second auth host
-    b.ptr(p(fields[6]));                         // +0x30 TUS mirror queue
-    b.u32(c.param34);                            // +0x34
-    b.u32(c.param38);                            // +0x38
-    b.ptr(p(fields[7]));                         // +0x3c NAT queue
-    b.u32(c.tag40);                              // +0x40
+    b.ptr(p(fields[0]));
+    b.u32(c.port_a); // +0x00 hostA, +0x04 presence port (u16 at +6)
+    b.ptr(p(fields[1]));
+    b.u32(c.port_b); // +0x08 hostB, +0x0c
+    b.ptr(p(fields[2]));
+    b.u32(c.auth_port); // +0x10 auth host (also the presence IP), +0x14 auth port
+    b.ptr(p(fields[3])); // +0x18 stats upload prefix (NULL = disabled)
+    b.ptr(p(fields[4])); // +0x1c SQS stats queue
+    b.ptr(Some(array)); // +0x20 typed array of queue paths
+    b.u32(c.session_minimum); // +0x24
+    b.u32(c.net_game_param44); // +0x28
+    b.ptr(p(fields[5])); // +0x2c second auth host
+    b.ptr(p(fields[6])); // +0x30 TUS mirror queue
+    b.u32(c.param34); // +0x34
+    b.u32(c.param38); // +0x38
+    b.ptr(p(fields[7])); // +0x3c NAT queue
+    b.u32(c.tag40); // +0x40
     debug_assert_eq!(b.here() - obj, 0x44);
     obj
 }
@@ -143,9 +180,15 @@ fn server_config(b: &mut Builder, c: &ServerConfig) -> usize {
 pub fn build_module(cfg: &NetBinConfig) -> Result<Vec<u8>> {
     let mut b = Builder::new();
     b.u32(0); // 0x10: root pointer, patched below
-    let mut syms = vec![(SID_SERVER_CONFIG_A, &cfg.config_a), (SID_SERVER_CONFIG_B, &cfg.config_b)];
+    let mut syms = vec![
+        (SID_SERVER_CONFIG_A, &cfg.config_a),
+        (SID_SERVER_CONFIG_B, &cfg.config_b),
+    ];
     syms.sort_by_key(|(sid, _)| *sid);
-    let values: Vec<(u32, usize)> = syms.iter().map(|(sid, c)| (*sid, server_config(&mut b, c))).collect();
+    let values: Vec<(u32, usize)> = syms
+        .iter()
+        .map(|(sid, c)| (*sid, server_config(&mut b, c)))
+        .collect();
     b.align(16);
     let root = b.here();
     b.u32(DC_ROOT_00);
@@ -160,14 +203,19 @@ pub fn build_module(cfg: &NetBinConfig) -> Result<Vec<u8>> {
     let mut relocs = b.relocs.clone();
     relocs.sort_unstable();
     b.u32(relocs.len() as u32);
-    for r in relocs { b.u32(r as u32) }
+    for r in relocs {
+        b.u32(r as u32)
+    }
     b.align(16);
     b.buf[0..4].copy_from_slice(b"DC00");
     b.buf[4..8].copy_from_slice(&DC_HDR_04.to_be_bytes());
     b.buf[8..12].copy_from_slice(&(reloc_off as u32).to_be_bytes());
     b.buf[12..16].copy_from_slice(&DC_HDR_0C.to_be_bytes());
     if b.buf.len() > MAX_MODULE {
-        bail!("net.bin is {} bytes; the client's load buffer is {MAX_MODULE:#x}", b.buf.len());
+        bail!(
+            "net.bin is {} bytes; the client's load buffer is {MAX_MODULE:#x}",
+            b.buf.len()
+        );
     }
     Ok(b.buf)
 }
@@ -187,7 +235,11 @@ const SID_PAK_DIFFS: u32 = 0x3D24_05AC;
 /// cleared because the GOTY 01.10 install contains every listed pak, so they load locally instead
 /// of from the content host.
 fn widen_actor_list(b: &mut Builder, base: &[u8], relocs: &[usize], list: usize) -> Result<usize> {
-    let (count, items, ty) = (be32(base, list)?, be32(base, list + 4)?, be32(base, list + 8)? as u32);
+    let (count, items, ty) = (
+        be32(base, list)?,
+        be32(base, list + 4)?,
+        be32(base, list + 8)? as u32,
+    );
     let is_ptr = |o: usize| relocs.binary_search(&o).is_ok();
     if count > 1 && !is_ptr(items + 0x20 + 8) {
         if is_ptr(items + 0x24 + 8) {
@@ -241,11 +293,22 @@ pub fn merge_module(base: &[u8], cfg: &NetBinConfig) -> Result<Vec<u8>> {
         .collect::<Result<Vec<_>>>()?;
     let root = be32(base, 0x10)?;
     let mut symbols = (0..be32(base, root + 4)?)
-        .map(|i| Ok((be32(base, root + 8 + 8 * i)? as u32, be32(base, root + 12 + 8 * i)?)))
+        .map(|i| {
+            Ok((
+                be32(base, root + 8 + 8 * i)? as u32,
+                be32(base, root + 12 + 8 * i)?,
+            ))
+        })
         .collect::<Result<std::collections::BTreeMap<u32, usize>>>()?;
-    let mut b = Builder { buf: base[..reloc_off].to_vec(), relocs: Vec::new() };
+    let mut b = Builder {
+        buf: base[..reloc_off].to_vec(),
+        relocs: Vec::new(),
+    };
     b.align(16);
-    for (sid, c) in [(SID_SERVER_CONFIG_A, &cfg.config_a), (SID_SERVER_CONFIG_B, &cfg.config_b)] {
+    for (sid, c) in [
+        (SID_SERVER_CONFIG_A, &cfg.config_a),
+        (SID_SERVER_CONFIG_B, &cfg.config_b),
+    ] {
         if !symbols.contains_key(&sid) {
             bail!("base net module has no symbol {sid:#010x}");
         }
@@ -285,11 +348,16 @@ pub fn merge_module(base: &[u8], cfg: &NetBinConfig) -> Result<Vec<u8>> {
     relocs.dedup();
     let new_reloc_off = b.align(4);
     b.u32(relocs.len() as u32);
-    for r in relocs { b.u32(r as u32) }
+    for r in relocs {
+        b.u32(r as u32)
+    }
     b.align(16);
     b.buf[8..12].copy_from_slice(&(new_reloc_off as u32).to_be_bytes());
     if b.buf.len() > MAX_MODULE {
-        bail!("merged net module is {} bytes; the client's load buffer is {MAX_MODULE:#x}", b.buf.len());
+        bail!(
+            "merged net module is {} bytes; the client's load buffer is {MAX_MODULE:#x}",
+            b.buf.len()
+        );
     }
     Ok(b.buf)
 }
@@ -306,15 +374,29 @@ pub fn read_archive_entry(blob: &[u8], name: &str) -> Result<Vec<u8>> {
 /// The entry paths of a game archive, in TOC order (entry 0, the manifest itself, excluded).
 pub fn archive_manifest(blob: &[u8]) -> Result<Vec<String>> {
     let manifest = archive_extract(blob, 0)?;
-    Ok(String::from_utf8_lossy(&manifest).split('\n').map(str::to_owned).collect())
+    Ok(String::from_utf8_lossy(&manifest)
+        .split('\n')
+        .map(str::to_owned)
+        .collect())
 }
 
 fn archive_extract(blob: &[u8], entry: usize) -> Result<Vec<u8>> {
     if blob.get(..4) != Some(b"PSAR") {
         bail!("not a game archive");
     }
-    let (toc_len, entry_size, count, block) = (be32(blob, 12)?, be32(blob, 16)?, be32(blob, 20)?, be32(blob, 24)?);
-    let width = if block <= 0x10000 { 2 } else if block <= 0x100_0000 { 3 } else { 4 };
+    let (toc_len, entry_size, count, block) = (
+        be32(blob, 12)?,
+        be32(blob, 16)?,
+        be32(blob, 20)?,
+        be32(blob, 24)?,
+    );
+    let width = if block <= 0x10000 {
+        2
+    } else if block <= 0x100_0000 {
+        3
+    } else {
+        4
+    };
     let table = 32 + count * entry_size;
     let sizes: Vec<usize> = blob
         .get(table..toc_len)
@@ -328,10 +410,16 @@ fn archive_extract(blob: &[u8], entry: usize) -> Result<Vec<u8>> {
         let mut blk = u32::from_be_bytes(toc[16..20].try_into().unwrap()) as usize;
         let size = toc[20..25].iter().fold(0usize, |a, &x| a << 8 | x as usize);
         let mut pos = toc[25..30].iter().fold(0usize, |a, &x| a << 8 | x as usize);
-        let mut out = Vec::with_capacity(size);
+        // The size comes from the file: reserve at most 16 MiB up front, grow if it is real.
+        let mut out = Vec::with_capacity(size.min(1 << 24));
         while out.len() < size {
-            let stored = match sizes.get(blk).context("archive block index out of range")? { 0 => block, &s => s };
-            let chunk = blob.get(pos..pos + stored).context("archive data truncated")?;
+            let stored = match sizes.get(blk).context("archive block index out of range")? {
+                0 => block,
+                &s => s,
+            };
+            let chunk = blob
+                .get(pos..pos + stored)
+                .context("archive data truncated")?;
             let want = block.min(size - out.len());
             if stored != want && chunk.first() == Some(&0x78) {
                 std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(chunk), &mut out)?;
@@ -366,8 +454,16 @@ pub fn build_archive(files: &[(&str, &[u8])]) -> Vec<u8> {
             let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
             z.write_all(chunk).expect("in-memory write");
             let packed = z.finish().expect("in-memory write");
-            let stored: &[u8] = if packed.len() < chunk.len() { &packed } else { chunk };
-            blocks.push(if stored.len() == BLOCK { 0 } else { stored.len() as u16 });
+            let stored: &[u8] = if packed.len() < chunk.len() {
+                &packed
+            } else {
+                chunk
+            };
+            blocks.push(if stored.len() == BLOCK {
+                0
+            } else {
+                stored.len() as u16
+            });
             data.extend_from_slice(stored);
         }
         toc.push((*md5, first, payload.len() as u64, offset as u64));
@@ -402,14 +498,22 @@ pub struct NetBinArtifacts {
 
 /// `base`: the user's own net module (see merge_module); None builds a module with only the server
 /// configs, which is enough for config parsing and login but drops the other net.bin symbols.
-pub fn build_all(cfg: &NetBinConfig, base: Option<&[u8]>, cipher: &BlobCipher) -> Result<NetBinArtifacts> {
+pub fn build_all(
+    cfg: &NetBinConfig,
+    base: Option<&[u8]>,
+    cipher: &BlobCipher,
+) -> Result<NetBinArtifacts> {
     let module = match base {
         Some(base) => merge_module(base, cfg)?,
         None => build_module(cfg)?,
     };
     let archive = build_archive(&[("net.bin", &module)]);
     let crypt = cipher.encrypt_stream(&archive);
-    Ok(NetBinArtifacts { module, archive, crypt })
+    Ok(NetBinArtifacts {
+        module,
+        archive,
+        crypt,
+    })
 }
 
 #[cfg(test)]
@@ -448,21 +552,44 @@ mod tests {
         let be = |o: usize| u32::from_be_bytes(m[o..o + 4].try_into().unwrap()) as usize;
         let old_reloc = be32(&base, 8).unwrap();
         let (root, reloc) = (be(0x10), be(8));
-        assert_eq!(m[0x14..old_reloc], base[0x14..old_reloc], "base data must be unchanged");
+        assert_eq!(
+            m[0x14..old_reloc],
+            base[0x14..old_reloc],
+            "base data must be unchanged"
+        );
         assert!(root >= old_reloc, "the new root table is appended");
         let relocs: Vec<usize> = (0..be(reloc)).map(|i| be(reloc + 4 + 4 * i)).collect();
         assert!(relocs.windows(2).all(|w| w[0] < w[1]));
-        let syms: Vec<(u32, usize)> = (0..be(root + 4)).map(|i| (be(root + 8 + 8 * i) as u32, be(root + 12 + 8 * i))).collect();
-        assert!(syms.windows(2).all(|w| w[0].0 < w[1].0), "root table must stay sorted");
-        assert_eq!(syms.len(), 3, "both configs plus the added empty 0x9f9bcb43 list");
+        let syms: Vec<(u32, usize)> = (0..be(root + 4))
+            .map(|i| (be(root + 8 + 8 * i) as u32, be(root + 12 + 8 * i)))
+            .collect();
+        assert!(
+            syms.windows(2).all(|w| w[0].0 < w[1].0),
+            "root table must stay sorted"
+        );
+        assert_eq!(
+            syms.len(),
+            3,
+            "both configs plus the added empty 0x9f9bcb43 list"
+        );
         for (i, &(sid, obj)) in syms.iter().enumerate() {
-            assert!(relocs.contains(&(root + 12 + 8 * i)), "root pointer must be relocated");
+            assert!(
+                relocs.contains(&(root + 12 + 8 * i)),
+                "root pointer must be relocated"
+            );
             if sid == SID_PATCH9_PAIRS {
                 assert_eq!(be(obj), 0);
                 continue;
             }
-            assert!(relocs.contains(&(obj + 0x10)), "auth host pointer must be relocated");
-            let port = if sid == SID_SERVER_CONFIG_A { 4444 } else { cfg.config_b.auth_port as usize };
+            assert!(
+                relocs.contains(&(obj + 0x10)),
+                "auth host pointer must be relocated"
+            );
+            let port = if sid == SID_SERVER_CONFIG_A {
+                4444
+            } else {
+                cfg.config_b.auth_port as usize
+            };
             assert_eq!(be(obj + 0x14), port);
         }
     }
@@ -470,9 +597,15 @@ mod tests {
     #[test]
     fn archive_round_trip() {
         let blob = build_archive(&[("2.networking", b"hello"), ("2.common", &[7u8; 0x12345])]);
-        assert_eq!(archive_manifest(&blob).unwrap(), ["2.networking", "2.common"]);
+        assert_eq!(
+            archive_manifest(&blob).unwrap(),
+            ["2.networking", "2.common"]
+        );
         assert_eq!(read_archive_entry(&blob, "2.networking").unwrap(), b"hello");
-        assert_eq!(read_archive_entry(&blob, "2.common").unwrap(), vec![7u8; 0x12345]);
+        assert_eq!(
+            read_archive_entry(&blob, "2.common").unwrap(),
+            vec![7u8; 0x12345]
+        );
         assert!(read_archive_entry(&blob, "3.networking").is_err());
     }
 
@@ -488,6 +621,9 @@ mod tests {
         assert!(relocs.contains(&0x10));
         let root = be(0x10);
         assert_eq!(be(root + 4), 2);
-        assert!(be(root + 8) < be(root + 16), "root entries must be sorted by sid");
+        assert!(
+            be(root + 8) < be(root + 16),
+            "root entries must be sorted by sid"
+        );
     }
 }

@@ -6,3 +6,5 @@ uc2-server*.toml
 !uc2-server.example.toml
 # Build output.
 target/
+# Local agent settings.
+.claude/settings.local.json

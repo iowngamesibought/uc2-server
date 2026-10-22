@@ -13,7 +13,7 @@ use crate::elf::Elf;
 /// key address). The key bytes are the same in every build; only their addresses differ.
 const BUILDS: [(&str, u64, u64); 2] = [
     ("GOTY 01.10", 0x00B3_C510, 0x00B3_C558),
-    ("earlier build", 0x00B3_CA00, 0x00B3_CA48),
+    ("disc 01.00", 0x00B3_CA00, 0x00B3_CA48),
 ];
 
 pub struct BlobCipher {
@@ -38,7 +38,7 @@ impl BlobCipher {
             .collect();
         let [(label, mac_key, bf_key)] = found.as_slice() else {
             bail!(
-                "{} known key locations match this executable; expected exactly one. It is not the main executable of a supported build (GOTY 01.10 or the earlier build), or it is a different file; see AGENTS.md",
+                "{} known key locations match this executable; expected exactly one. It is not the main executable of a supported build (GOTY 01.10 or disc 01.00), or it is a different file; see AGENTS.md",
                 found.len()
             );
         };
@@ -127,41 +127,4 @@ impl BlobCipher {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_cipher() -> BlobCipher {
-        BlobCipher::new(&[0x41; 64], b"0123456789abcdefghij").unwrap()
-    }
-
-    #[test]
-    fn blowfish_standard_vector() {
-        // Schneier's vector: zero key, zero block -> 4EF997456198DD78.
-        let bf: Blowfish = Blowfish::new_from_slice(&[0u8; 8]).unwrap();
-        let mut block = [0u8; 8];
-        bf.encrypt_block(GenericArray::from_mut_slice(&mut block));
-        assert_eq!(block, [0x4E, 0xF9, 0x97, 0x45, 0x61, 0x98, 0xDD, 0x78]);
-    }
-
-    #[test]
-    fn blob_round_trip_and_lengths() {
-        let c = test_cipher();
-        for len in 0..64 {
-            let msg: Vec<u8> = (0..len as u8).collect();
-            let blob = c.encrypt_blob(&msg);
-            assert_eq!(blob.len(), (len + 0x1b) & !7);
-            let plain = c.decrypt_blob(&blob).unwrap();
-            assert_eq!(&plain[..len], &msg[..]);
-        }
-        let mut bad = c.encrypt_blob(b"hello");
-        bad[0] ^= 1;
-        assert!(c.decrypt_blob(&bad).is_none());
-    }
-
-    #[test]
-    fn stream_round_trip() {
-        let c = test_cipher();
-        let msg = b"some archive bytes ".repeat(100);
-        assert_eq!(c.decrypt_stream(&c.encrypt_stream(&msg)).unwrap(), msg);
-    }
-}
+mod test;

@@ -2,12 +2,17 @@
 
 You are helping someone run this server for their own copy of the game. Work through the steps below in order, and check each one before moving on. Read `README.md` first for what the server does.
 
+<!-- Shared ground rules: copied verbatim from the game-server agent-docs template. Edit them there, then copy to every project. -->
 ## Ground rules
 
 - **Use only the user's own copy of the game.** Never download game files, decrypted executables, keys or license files from the internet, and never suggest where to get them. If the user doesn't have the files, stop and tell them what's missing.
-- **Never put game-derived files in this repository** (executables, archives, generated output, decompiler projects or exports, server logs). Keep them in a folder outside it, or in a local `game/` folder the user doesn't commit.
-- **The host names you find in step 2 go into the user's DNS setup only.** Don't write them into this repository (code, docs, config examples, commits or issues), and don't copy anything else out of the executable: no keys, code or text. The server reads what it needs from the user's files at runtime.
-- Run commands only with the user's agreement when they change their system (firewall rules, DNS, router settings).
+- **Decrypting the executable is the user's job.** Where the server needs the executable decrypted, the user provides that form from their own copy; it is their responsibility. Don't explain how to decrypt it, and never obtain a decrypted copy elsewhere.
+- **Never put game-derived files in this repository**: executables, archives, generated output, decompiler projects or exports, server logs, stored uploads. Keep them in a folder outside it, or in the git-ignored folders this guide names.
+- **The host names you find go into the user's DNS setup only.** Don't write them into this repository (code, docs, config examples, commits or issues), and don't copy anything else out of the executable: no keys, code or text. The server reads what it needs from the user's files at runtime.
+- **Change the user's system only with their agreement**: firewall rules, DNS, router settings.
+<!-- End of shared ground rules. -->
+
+In this project the git-ignored folder for game-derived files is `game/`.
 
 ## 1. Supply the required files
 
@@ -15,23 +20,27 @@ The server needs three files from the user's own installed copy. This guide deli
 
 ### Where to look
 
-Ask the user where their copy of the installed game is and which platform it's for; they can give you the folder and that context. Copying the files off the console is the user's job, like decrypting the executable below; ask them for the files once they have them on this machine. Within it, the files you need sit in the game's **data folder**: the one that holds the main executable and a `build/main/` tree of archives.
+Follow the [pick-game-files](.claude/skills/pick-game-files/SKILL.md) skill: it finds the base game and the latest update in the user's copy, disc or download, and takes the update's copy of each file over the base game's. For this game:
 
-Copy the three files into a `game/` folder next to the user's `uc2-server.toml` (git-ignored in this project), keeping their original names, and set `executable`, `script_archive` and `text_archive` to `game/<file name>`. Absolute paths elsewhere work too. Never place them anywhere that gets committed.
+- `executable` is the update's. The server reads only the cipher keys from it, and those were the same in every build checked: if the server doesn't know the update's build, the base game's executable may be used instead, provided the server knows that build.
+- `script_archive` is the update's archive if one of the update's archives carries the config module, otherwise the base game's script archive.
+- `text_archive` is the base game's: no update in the copies checked changed the online texts.
+
+Copy the three files into a `game/` folder next to the user's `uc2-server.toml` (git-ignored in this project), keeping their original names, and set the keys to `game/<file name>`. Absolute paths elsewhere work too. Never place them anywhere that gets committed.
 
 ### What each file is
 
 | Config key | How to recognise it |
 |---|---|
-| `executable` | The game's **main boot executable**: the one file directly in the data folder with a `.BIN` extension, about 14–15 MB. As installed it is **encrypted** (it does not start with `\x7fELF`). The server needs it **decrypted** to an ELF: starts with `\x7fELF`, then bytes `02 02` (64-bit, big-endian). The user must provide that decrypted form from their own copy; it is their responsibility. Don't explain how to decrypt it, and never obtain a decrypted copy elsewhere. |
-| `script_archive` | An **archive** in the game's own archive format, a few MB in `build/main/`. Its entries are compiled **script modules** with names like `<subsystem>.bin`, about 180 of them, and **one is `net.bin`**. |
-| `text_archive` | An **archive** in the same format, about 2 MB in the same folder. Its entries are **per-language text tables** named `<number>.<category>` (e.g. `2.common`, `2.subtitles`), and the list includes **`<number>.networking`** for each language. |
+| `executable` | The **main boot executable** of the latest update: the one file with a `.BIN` extension directly in the update's data folder (in a downloaded copy, directly in the game's folder), about 14–15 MB. As installed it is **encrypted** (it does not start with `\x7fELF`). The server needs it **decrypted** to an ELF: starts with `\x7fELF`, then bytes `02 02` (64-bit, big-endian). See the ground rules. The server reads only the cipher keys from it (see "Where to look" for when the base game's executable may do). |
+| `script_archive` | The archive holding the game's **online config module**: an entry named `net.bin`, in the game's own archive format. The base game has it in a few-MB archive in `build/main/` whose entries are compiled **script modules** named like `<subsystem>.bin`, about 180 of them. An update's archive, if it carries a newer one, stores it under a full path ending in `/net.bin`. |
+| `text_archive` | The base game's **text archive**, about 2 MB in `build/main/`. Its entries are **per-language text tables** named `<number>.<category>` (e.g. `2.common`, `2.subtitles`), and the list includes **`<number>.networking`** for each language. An update's archive can hold other text tables (under full paths), but not the online ones. |
 
-`build/main/` holds several archives, including very large ones (hundreds of MB to GB) with map and character data. Those are never the right ones. Neither is a big patch archive directly in the data folder whose entries are full paths: it can contain text tables too, but not in the form the server needs.
+`build/main/` also holds very large archives (hundreds of MB to GB) with map and character data. Those are never the right ones.
 
 ### Check each candidate with the server itself
 
-- `uc2-server list-archive <file>` lists an archive's entries and ends with a verdict: `fits script_archive`, `fits text_archive` or `fits neither`. It only reads the file. Try the candidates in `build/main/` until you have one of each.
+- `uc2-server list-archive <file>` lists an archive's entries and ends with a verdict: `fits script_archive`, `fits text_archive` or `fits neither`. It only reads the file. Go through the candidates as the skill describes until you have one of each.
 - For the executable, start the server (next step). The startup log tells you whether it's right.
 
 **Check:**
@@ -40,8 +49,8 @@ Copy the three files into a `game/` folder next to the user's `uc2-server.toml` 
 3. The log must show:
    - `cipher keys found build=...`. Errors and what they mean:
      - **"not a big-endian ELF64"**: the executable is still encrypted, or it's the wrong file.
-     - **"N known key locations match"**: it's not the main executable of a supported build (GOTY 01.10 or one earlier build).
-   - `using the installed net.bin as the base of the served config`. A **"not the script archive"** error means `script_archive` points at the wrong archive.
+     - **"N known key locations match"**: the server doesn't know this build. It knows two: the downloaded GOTY edition's (01.10, every update built in) and one region's original disc release (01.00). If it is the update's executable, try the base game's (see "Where to look"). If the server knows neither, stop and report it: supporting another build needs a code change.
+   - `using the installed net.bin as the base of the served config`. A **"no online config module"** error means `script_archive` points at the wrong archive.
    - `networking texts ready from_game=...` listing language indexes. A **"not the text archive"** error means `text_archive` is wrong.
    - `live-data HTTP listening`, `auth (ticket echo) listening` and `presence listening`. A bind error usually means port 80 is in use (e.g. IIS) or another server instance is running.
 
@@ -82,14 +91,7 @@ Pipe the output into `grep`/`findstr` rather than saving it, or save it outside 
 
 ## 3. Set up the DNS override
 
-Map both names to `public_host` on the DNS server the console uses. For dnsmasq (e.g. on an OpenWrt router):
-```
-address=/<config host>/<public_host>
-address=/<content host>/<public_host>
-```
-Other options: a local DNS server, or the router's static-host setting. Then set the console to that DNS server, either automatically via DHCP or manually in its network settings.
-
-**Proxies:** if a proxy or TUN (fake-IP) sits between the console and the internet, add both names to its fake-IP filter and route them DIRECT. Otherwise the proxy answers with its own addresses and the console never reaches the server.
+Follow the [dns-override](.claude/skills/dns-override/SKILL.md) skill to point both names from step 2, the config host and the content host, at `public_host`. Only this game uses them, so they can be overridden network-wide, for example on the router.
 
 **Check:**
 1. `nslookup <config host> <console's DNS server>` must return `public_host`; the same for the content host. Query the console's DNS server explicitly: the machine you run the check on may use a different resolver.
@@ -105,10 +107,10 @@ Other options: a local DNS server, or the router's static-host setting. Then set
 
 | Symptom | Likely cause |
 |---|---|
-| No request reaches the server | DNS still resolves the config host elsewhere (check against the console's DNS server), a proxy intercepts it, or the firewall blocks port 80 |
+| No request reaches the server | Follow "No request reaches the server" in the [dns-override](.claude/skills/dns-override/SKILL.md) skill, with the config host and port 80 |
 | Config downloaded but no auth line | `public_host` isn't reachable from the console, or UDP 3233 is blocked |
 | `auth: datagram is not a login ticket with a valid online id` from the console's address | The server only answers well-formed login tickets, and this one failed the check. Report it as a bug with the `len=` value from that line |
-| Console stuck on "connecting" after auth, no further requests | `script_archive` missing, or the console is using an old cached config; the server must send `Last-Modified` (it does by default) |
+| Console stuck on "connecting" after auth, no further requests | `script_archive` missing or not the update's copy (see "Where to look"), or the console is using an old cached config; the server must send `Last-Modified` (it does by default) |
 | "Error syncing text" | The text for the console's language index wasn't served: check `text_archive` and the `networking texts ready` log line |
 | Only one `GET /net-patch9...` per start, and changes have no effect | The console's cached copy is considered current. Any change to the served config changes its date and forces a download. |
 | "UNKNOWN STRING" in place of some online menu labels | The served networking text is the shipped version, which lacks strings the online config uses. See below. |

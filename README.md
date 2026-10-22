@@ -1,8 +1,10 @@
 # uc2-server
 
-A community server for the online mode of **UC2** on certain game console.
+A community server for the online mode of **UC2** on a certain game console.
 
 This project is not affiliated with or endorsed by the game's developer or publisher. It ships no game files: the server reads what it needs from **your own installed copy** at startup and keeps everything it derives from it in memory only.
+
+Status: tested on a real console with the downloaded GOTY edition, which has every update built in. Disc copies with their updates are untested.
 
 ## Required: a DNS override
 
@@ -12,13 +14,13 @@ This README deliberately doesn't name the domains. To find them, **ask an AI age
 
 ## Required: three files from your copy of the game
 
-The server ships no game data. It needs three files from **your own installed copy**, set in the config:
+The server ships no game data. It needs three files from **your own installed copy**, set in the config. The game must have its **latest update** installed, and when the update has its own copy of a file, that copy is the right one, whether the game came on disc or as a download; otherwise the base game's.
 
 | Config key | What it is |
 |---|---|
-| `executable` | The game's main executable, decrypted from your own installation. The server reads its cipher keys from it at startup. |
-| `script_archive` | The archive of compiled script modules. The online config the console downloads is built from it. |
-| `text_archive` | The archive of per-language text tables. The console's online text comes from it. |
+| `executable` | The main executable of the game's latest update, decrypted from your own installation. The server reads its cipher keys from it at startup. |
+| `script_archive` | The archive holding the online config module: the latest update's if it carries one, otherwise the base game's archive of compiled script modules. The online config the console downloads is built from it. |
+| `text_archive` | The base game's archive of per-language text tables. The console's online text comes from it. |
 
 This README deliberately doesn't name the files. To locate them, **ask an AI agent to follow [AGENTS.md](AGENTS.md)**: it describes how to recognise each one in your install, and how to check its choice with the server (`uc2-server list-archive <file>` and the startup log). Never download these files from the internet; use only your own copy.
 
